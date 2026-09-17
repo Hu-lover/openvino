@@ -3,6 +3,7 @@
 //
 
 #include "openvino/frontend/pytorch/node_context.hpp"
+#include "openvino/op/abs.hpp"
 #include "openvino/op/add.hpp"
 #include "openvino/op/constant.hpp"
 #include "openvino/op/convert.hpp"
@@ -30,12 +31,13 @@ Output<Node> pairwise_distance(const NodeContext& context,
                                Output<Node> eps,
                                bool keepdim) {
     auto one = context.mark_node(v0::Constant::create(element::f32, Shape{}, {1}));
-    auto p_plus_eps = context.mark_node(std::make_shared<v1::Add>(p, eps));
-    auto inv_p = context.mark_node(std::make_shared<v1::Divide>(one, p_plus_eps));
+    auto inv_p = context.mark_node(std::make_shared<v1::Divide>(one, p));
     auto minus_one = context.mark_node(v0::Constant::create(element::i32, Shape{1}, {-1}));
     align_eltwise_input_types(context, x, y, is_python_scalar_input(context, 0), is_python_scalar_input(context, 1));
     auto x_y_diff = context.mark_node(std::make_shared<v1::Subtract>(x, y));
-    auto x_y_diff_in_p_power = context.mark_node(std::make_shared<v1::Power>(x_y_diff, p));
+    auto x_y_diff_with_eps = context.mark_node(std::make_shared<v1::Add>(x_y_diff, eps));
+    auto x_y_diff_abs = context.mark_node(std::make_shared<v0::Abs>(x_y_diff_with_eps));
+    auto x_y_diff_in_p_power = context.mark_node(std::make_shared<v1::Power>(x_y_diff_abs, p));
     auto summation = context.mark_node(std::make_shared<v1::ReduceSum>(x_y_diff_in_p_power, minus_one, keepdim));
     auto summation_in_inv_p = context.mark_node(std::make_shared<v1::Power>(summation, inv_p));
     return summation_in_inv_p;
@@ -61,7 +63,7 @@ OutputVector translate_cdist(const NodeContext& context) {
     auto y_unsqueeze_ax = context.mark_node(std::make_shared<v1::Subtract>(input_rank, two));
     auto x_unsqueeze = context.mark_node(std::make_shared<v0::Unsqueeze>(x, x_unsqueeze_ax));
     auto y_unsqueeze = context.mark_node(std::make_shared<v0::Unsqueeze>(y, y_unsqueeze_ax));
-    auto eps = context.mark_node(v0::Constant::create(element::f32, Shape{}, {1e-06}));
+    auto eps = context.mark_node(v0::Constant::create(element::f32, Shape{}, {0.0}));
     auto result = pairwise_distance(context, x_unsqueeze, y_unsqueeze, p, eps, false);
     return {result};
 };
